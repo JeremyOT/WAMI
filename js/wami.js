@@ -75,12 +75,25 @@ var WAMI = WAMI || {};
     switch (wami.platform) {
       case 'iOS':
         wami.invokeMethod = function(method, callID, args, expectsResponse) {
-          window.location.href = 'wami://' + JSON.stringify({'method': method, 'parameters': args, 'callID': callID, 'expectsResponse': expectsResponse});
+          setTimeout(function(){
+            window.location.href = 'wami://' + JSON.stringify({'method': method, 'parameters': args, 'callID': callID, 'expectsResponse': expectsResponse});
+          }, 0);
         }
         break;
       case 'Android':
         wami.invokeMethod = function(method, callID, args, expectsResponse) {
           WAMIAndroidBridge.invoke(method, callID, JSON.stringify(args), expectsResponse);
+        }
+        break;
+      case 'Qt':
+        wami.invokeMethod = function(method, callID, args, expectsResponse) {
+          WAMIQtBridge.invoke(method, callID, args, expectsResponse);
+        }
+        break;
+      case 'WP8':
+      case 'W8':
+        wami.invokeMethod = function(method, callID, args, expectsResponse) {
+          window.external.notify(JSON.stringify({'method': method, 'parameters': args, 'callID': callID, 'expectsResponse': expectsResponse}));
         }
         break;
       default:
@@ -92,7 +105,7 @@ var WAMI = WAMI || {};
   function platformChanged(handler) {
     if (handler) {
       platformChangedHandler = handler;
-    } else if (wami.platformChangedHandler) {
+    } else if (platformChangedHandler) {
       platformChangedHandler(wami.platform);
     }
   }
@@ -104,24 +117,36 @@ var WAMI = WAMI || {};
     if (!registeredMethod) {
       throw 'error: method "' + method + '" not registered';
     }
-    if (registeredAppMethods[method].fallbackFunction) {
+    var fallbackFunction = registeredAppMethods[method].fallbackFunction
+    if (fallbackFunction) {
       future.fallback(function() {
         args.splice(0, 0, future);
-        registeredAppMethods[method].fallbackFunction.apply(null, args);
+        fallbackFunction.apply(null, args);
       });
     }
     if (wami.platform) {
       callID = Math.floor(Math.random() * 0x10000000).toString(16)
       if (registeredMethod.expectsResponse) activeMethodFutures[callID] = future;
-      wami.invokeMethod(method, callID, args, registeredMethod.expectsResponse);
+      wami.invokeMethod(method, callID, args, registeredMethod.expectsResponse || registeredMethod.alwaysFallback);
     } else {
       future.revert();
     }
     return future;
   }
 
-  function registerAppMethod(method, fallbackFunction, expectsResponse) {
-    registeredAppMethods[method] = {'fallbackFunction': fallbackFunction, 'expectsResponse': !!expectsResponse};
+  function appMethodWithFallback(method, fallbackFunction) {
+    var args = Array.prototype.slice.call(arguments, 2),
+        registeredMethod = registeredAppMethods[method];
+    if (!registeredMethod) {
+      throw 'error: method "' + method + '" not registered';
+    }
+    registeredAppMethods[method].fallbackFunction = fallbackFunction
+    args.splice(0, 0, method)
+    return appMethod.apply(null, args)
+  }
+
+  function registerAppMethod(method, fallbackFunction, expectsResponse, alwaysFallback) {
+    registeredAppMethods[method] = {'fallbackFunction': fallbackFunction, 'expectsResponse': !!expectsResponse, 'alwaysFallback': !!alwaysFallback};
   }
 
   function finishAppMethod(callID) {
@@ -179,6 +204,7 @@ var WAMI = WAMI || {};
   }
 
   wami.appMethod = appMethod;
+  wami.appMethodWithFallback = appMethodWithFallback;
   wami.setCurrentPlatform = setCurrentPlatform;
   wami.registerAppMethod = registerAppMethod;
   wami.finishAppMethod = finishAppMethod;
